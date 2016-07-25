@@ -1,0 +1,195 @@
+start -> Ast
+    = block
+
+block -> Ast
+    = s:(Comment* t:(Tag / buffer) { return t })* Comment*
+    { return Ast::Block(s) }
+
+eol
+    = "\n"
+    / "\r\n"
+    / "\r"
+    / "\u2028"
+    / "\u2029"
+
+ws
+    = [\t\v\f \u00A0\uFEFF] / eol
+
+opentag
+    = "{"
+closetag
+    = "}"
+openarray
+    = "("
+closearray
+    = ")"
+
+string -> Literal
+    = '"' (!'"' !eol c:. { c })* '"'
+    { let s = match_str.to_string(); Literal::String(s) }
+
+float -> Literal
+    = integer "." unsigned_integer { let f = from_str::<f64>(match_str).unwrap(); Literal::Float(f) }
+
+unsigned_integer -> Literal
+    = digits:[0-9]+ { let i = from_str::<u64>(match_str).unwrap(); Literal::Int(i) }
+
+signed_integer -> Literal
+    = '-' n:unsigned_integer { let x = match n { Literal::Int(v) => v * -1, _ => -1 }; Literal::Int(x) }
+
+integer -> Literal
+    = signed_integer / unsigned_integer
+
+boolean -> Literal
+    = "true" { Literal::Bool(true) }
+    / "false" { Literal::Bool(false) }
+
+literal -> Ast
+    = l:(string / integer / float / boolean)
+    { Ast::Literal(l) }
+
+keypart -> String
+    = [a-zA-Z$_] [a-zA-Z0-9$_]*
+    { match_str.to_string() }
+key -> String
+    = keypart ("." keypart)*
+    { match_str.to_string() }
+
+namespace -> String
+    = [a-zA-Z] [a-zA-Z0-9_]*
+    { match_str.to_string() }
+
+scopeoperator = "::"
+identifier -> Ast
+    = c:namespace scopeoperator "."
+    { Ast::Identifier(Some(c), None) }
+    / c:namespace scopeoperator i:key
+    { Ast::Identifier(Some(c), Some(i)) }
+    / i:key
+    { Ast::Identifier(None, Some(i)) }
+
+paramlist -> Vec<String>
+    = openarray filler p:(k:key filler { k })* filler closearray
+    { p }
+paramset -> Vec<String>
+    = p:(e:expression filler { e })*
+    { p }
+
+buffer -> Ast
+    = e:eol w:ws*
+    { Ast::Format(match_str.to_string()) }
+    / b:(!Comment !opentag !closetag !eol c:. { c })+
+    { Ast::Buffer(b.to_string()) }
+
+escapekeys
+    = "rb"
+    / "lb"
+    / "s"
+    / "n"
+    / "r"
+escapes -> Ast
+    = opentag "~" k:escapekeys closetag
+    { Ast::Escape(k) }
+
+commentopen
+    = opentag "*"
+commentclose
+    = "*" closetag
+Comment
+    = commentopen (!commentclose .)* commentclose
+
+filler
+    = (ws / Comment)*
+
+rawopen
+    = opentag "`"
+rawclose
+    = "`" closetag
+Raw -> Ast
+    = rawopen r:(!rawclose c:. { c })* rawclose
+    { Ast::Raw(r.to_string()) }
+
+FnCreate -> Ast
+    = opentag filler "fn" filler p:(l:paramlist filler { l })? b:block filler closetag
+    { Ast::FnCreate(p, b) }
+
+pipesymbol = "|"
+Pipe -> Ast
+    = opentag filler c:pipestart filler etal:(pipesymbol c:pipecontinue { c })+ filler closetag
+    { Ast::Pipe(c, etal) }
+
+Call -> Ast
+    = opentag filler c:callable filler p:paramset filler closetag
+    { Ast::Call(c, p) }
+
+associativeitem -> Ast
+    = ":" k:key filler v:expression
+    { Ast::MapPair(k, v) }
+Map -> Ast
+    = openarray ":" closearray
+    { Ast::Map(None) }
+    / openarray filler a:(e:associativeitem filler { e })+ filler closearray
+    { Ast::Map(Some(a)) }
+Array -> Ast
+    = openarray closearray
+    { Ast::Array(None) }
+    / openarray filler a:(e:expression filler { e })+ filler closearray
+    { Ast::Array(Some(a)) }
+
+Empty -> Ast
+    = opentag closetag
+    { Ast::Empty }
+
+Tag -> Ast
+    = FnCreate
+    / Pipe
+    / Call
+    / Raw
+    / escapes
+    / Empty
+expression -> Ast
+    = Tag
+    / literal
+    / Map
+    / Array
+    / identifier
+
+comparators -> Ast
+    = c:(
+        "==" { "eq" }
+      / "!=" { "neq" }
+      / "<=" { "lte" }
+      / ">=" { "gte" }
+      / "<" { "lt" }
+      / ">" { "gt" }
+      / "and" { "cmpand" }
+      / "or" { "cmpor" }
+      / "not" { "not" }
+    )
+    { Ast::Identifier(None, Some(c)) }
+mathators -> Ast
+    = c:(
+        "+" { "add" }
+      / "-" { "sub" }
+      / "*" { "mul" }
+      / "/" { "div" }
+      / "%" { "mod" }
+    )
+    { Ast::Identifier(None, Some(c)) }
+
+callable -> Ast
+    = FnCreate
+    / comparators
+    / mathators
+    / identifier
+
+pipestart -> Ast
+    = FnCreate
+    / Map
+    / Array
+    / literal
+    / identifier
+
+pipecontinue -> Ast
+    = FnCreate
+    / identifier
