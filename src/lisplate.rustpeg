@@ -1,0 +1,207 @@
+use ast::Literal;
+use ast::EscapeSeqs;
+use ast::Ast;
+
+start -> Box<Ast>
+    = b:block
+    { b }
+
+blockitem -> Box<Ast>
+    = Tag
+    / buffer
+
+block -> Box<Ast>
+    = s:(Comment* t:blockitem { t })* Comment*
+    { Box::new(Ast::Block(s)) }
+
+eol
+    = "\n"
+    / "\r\n"
+    / "\r"
+    / "\u2028"
+    / "\u2029"
+
+ws
+    = [\t\v\f \u00A0\uFEFF] / eol
+
+opentag
+    = "{"
+closetag
+    = "}"
+openarray
+    = "("
+closearray
+    = ")"
+
+string -> Literal
+    = '"' (!'"' !eol c:. { c })* '"'
+    { Literal::Str(match_str.to_string()) }
+
+float -> Literal
+    = integer "." unsigned_integer { Literal::Float(match_str.parse::<f64>().unwrap()) }
+
+unsigned_integer -> Literal
+    = digits:[0-9]+ { Literal::Int(match_str.parse::<i64>().unwrap()) }
+
+signed_integer -> Literal
+    = '-' n:unsigned_integer { let x = match n { Literal::Int(v) => v * -1, _ => -1 }; Literal::Int(x) }
+
+integer -> Literal
+    = signed_integer / unsigned_integer
+
+boolean -> Literal
+    = "true" { Literal::Bool(true) }
+    / "false" { Literal::Bool(false) }
+
+literal -> Box<Ast>
+    = l:(string / integer / float / boolean)
+    { Box::new(Ast::Literal(l)) }
+
+keypart -> String
+    = [a-zA-Z$_] [a-zA-Z0-9$_]*
+    { match_str.to_string() }
+key -> String
+    = keypart ("." keypart)*
+    { match_str.to_string() }
+
+namespace -> String
+    = [a-zA-Z] [a-zA-Z0-9_]*
+    { match_str.to_string() }
+
+scopeoperator = "::"
+identifier -> Box<Ast>
+    = c:namespace scopeoperator "."
+    { Box::new(Ast::Identifier(Some(c), None)) }
+    / c:namespace scopeoperator i:key
+    { Box::new(Ast::Identifier(Some(c), Some(i))) }
+    / i:key
+    { Box::new(Ast::Identifier(None, Some(i))) }
+
+paramlist -> Vec<String>
+    = openarray filler p:(k:key filler { k })* filler closearray
+    { p }
+paramset -> Vec<Box<Ast>>
+    = p:(e:expression filler { e })*
+    { p }
+
+buffer -> Box<Ast>
+    = e:eol w:ws*
+    { Box::new(Ast::Format(match_str.to_string())) }
+    / b:(!Comment !opentag !closetag !eol c:. { c })+
+    { Box::new(Ast::Buffer(match_str.to_string())) }
+
+escapekeys -> EscapeSeqs
+    = "rb" { EscapeSeqs::RightBrace }
+    / "lb" { EscapeSeqs::LeftBrace }
+    / "s" { EscapeSeqs::Space }
+    / "n" { EscapeSeqs::NewLine }
+    / "r" { EscapeSeqs::CarriageReturn }
+escapes -> Box<Ast>
+    = opentag "~" k:escapekeys closetag
+    { Box::new(Ast::Escape(k)) }
+
+commentopen
+    = opentag "*"
+commentclose
+    = "*" closetag
+Comment
+    = commentopen (!commentclose .)* commentclose
+
+filler
+    = (ws / Comment)*
+
+rawopen
+    = opentag "`"
+rawclose
+    = "`" closetag
+rawstring -> String
+    = (!rawclose .)*
+    { match_str.to_string() }
+Raw -> Box<Ast>
+    = rawopen r:rawstring rawclose
+    { Box::new(Ast::Raw(r)) }
+
+FnCreate -> Box<Ast>
+    = opentag filler "fn" filler p:(l:paramlist filler { l })? b:block filler closetag
+    { Box::new(Ast::FnCreate(p, b)) }
+
+pipesymbol = "|"
+Pipe -> Box<Ast>
+    = opentag filler c:pipestart filler etal:(pipesymbol c:pipecontinue { c })+ filler closetag
+    { Box::new(Ast::Pipe(c, etal)) }
+
+Call -> Box<Ast>
+    = opentag filler c:callable filler p:paramset filler closetag
+    { Box::new(Ast::Call(c, p)) }
+
+associativeitem -> (String, Box<Ast>)
+    = ":" k:key filler v:expression
+    { (k, v) }
+Map -> Box<Ast>
+    = openarray ":" closearray
+    { Box::new(Ast::Map(None)) }
+    / openarray filler a:(e:associativeitem filler { e })+ filler closearray
+    { Box::new(Ast::Map(Some(a))) }
+Array -> Box<Ast>
+    = openarray closearray
+    { Box::new(Ast::Array(None)) }
+    / openarray filler a:(e:expression filler { e })+ filler closearray
+    { Box::new(Ast::Array(Some(a))) }
+
+Empty -> Box<Ast>
+    = opentag closetag
+    { Box::new(Ast::Empty) }
+
+Tag -> Box<Ast>
+    = FnCreate
+    / Pipe
+    / Call
+    / Raw
+    / escapes
+    / Empty
+expression -> Box<Ast>
+    = Tag
+    / literal
+    / Map
+    / Array
+    / identifier
+
+comparators -> Box<Ast>
+    = c:(
+        "==" { "eq".to_string() }
+      / "!=" { "neq".to_string() }
+      / "<=" { "lte".to_string() }
+      / ">=" { "gte".to_string() }
+      / "<" { "lt".to_string() }
+      / ">" { "gt".to_string() }
+      / "and" { "cmpand".to_string() }
+      / "or" { "cmpor".to_string() }
+      / "not" { "not".to_string() }
+    )
+    { Box::new(Ast::Identifier(None, Some(c))) }
+mathators -> Box<Ast>
+    = c:(
+        "+" { "add".to_string() }
+      / "-" { "sub".to_string() }
+      / "*" { "mul".to_string() }
+      / "/" { "div".to_string() }
+      / "%" { "mod".to_string() }
+    )
+    { Box::new(Ast::Identifier(None, Some(c))) }
+
+callable -> Box<Ast>
+    = FnCreate
+    / comparators
+    / mathators
+    / identifier
+
+pipestart -> Box<Ast>
+    = FnCreate
+    / Map
+    / Array
+    / literal
+    / identifier
+
+pipecontinue -> Box<Ast>
+    = FnCreate
+    / identifier
