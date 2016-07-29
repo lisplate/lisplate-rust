@@ -1,4 +1,4 @@
-
+#[derive(PartialEq, Clone, Debug)]
 pub enum Literal {
   Float(f64),
   Int(i64),
@@ -6,6 +6,7 @@ pub enum Literal {
   Str(String),
 }
 
+#[derive(PartialEq, Clone, Debug)]
 pub enum EscapeSeqs {
     RightBrace,
     LeftBrace,
@@ -14,6 +15,7 @@ pub enum EscapeSeqs {
     CarriageReturn
 }
 
+#[derive(PartialEq, Clone, Debug)]
 pub enum Ast {
   Block(Vec<Box<Ast>>),
   Literal(Literal),

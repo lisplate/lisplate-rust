@@ -2,14 +2,11 @@ use ast::Literal;
 use ast::EscapeSeqs;
 use ast::Ast;
 
-start -> Box<Ast>
-    = b:block
-    { b }
-
 blockitem -> Box<Ast>
     = Tag
     / buffer
 
+#[pub]
 block -> Box<Ast>
     = s:(Comment* t:blockitem { t })* Comment*
     { Box::new(Ast::Block(s)) }
@@ -54,7 +51,7 @@ boolean -> Literal
     / "false" { Literal::Bool(false) }
 
 literal -> Box<Ast>
-    = l:(string / integer / float / boolean)
+    = l:(string / float / integer / boolean)
     { Box::new(Ast::Literal(l)) }
 
 keypart -> String
@@ -122,16 +119,16 @@ Raw -> Box<Ast>
     { Box::new(Ast::Raw(r)) }
 
 FnCreate -> Box<Ast>
-    = opentag filler "fn" filler p:(l:paramlist filler { l })? b:block filler closetag
+    = opentag "fn" filler p:(l:paramlist filler { l })? b:block filler closetag
     { Box::new(Ast::FnCreate(p, b)) }
 
 pipesymbol = "|"
 Pipe -> Box<Ast>
-    = opentag filler c:pipestart filler etal:(pipesymbol c:pipecontinue { c })+ filler closetag
+    = opentag c:pipestart filler etal:(pipesymbol c:pipecontinue { c })+ filler closetag
     { Box::new(Ast::Pipe(c, etal)) }
 
 Call -> Box<Ast>
-    = opentag filler c:callable filler p:paramset filler closetag
+    = opentag c:callable filler p:paramset filler closetag
     { Box::new(Ast::Call(c, p)) }
 
 associativeitem -> (String, Box<Ast>)
